@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Door scanner</title>
+<style>
+  :root{--bg:#10141c;--fg:#f2f4f8;--mut:#9aa3b5;--ok:#1f9d55;--warn:#d98a00;--bad:#c93a3a}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;display:flex;flex-direction:column;transition:background .15s}
+  body.ok{background:var(--ok)} body.already{background:var(--warn)} body.invalid,body.denied{background:var(--bad)}
+  header{padding:12px 16px;display:flex;gap:8px;align-items:center;justify-content:space-between}
+  #reader{width:100%;max-width:480px;margin:0 auto}
+  #result{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:16px}
+  #big{font-size:44px;font-weight:800;margin:0}
+  #sub{font-size:22px;margin:6px 0 0}
+  form{padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:flex;gap:8px}
+  input{flex:1;min-width:0;padding:12px;border-radius:8px;border:0;font:inherit}
+  button{padding:12px 16px;border:0;border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
+  button:focus-visible,input:focus-visible{outline:3px solid #fff}
+  #setup{padding:16px;display:grid;gap:10px;max-width:480px;margin:auto;width:100%}
+  label{color:var(--mut)}
+</style></head>
+<body>
+<section id="setup" hidden>
+  <h2>Scanner setup</h2>
+  <label>Web app URL <input id="url" placeholder="https://script.google.com/macros/s/…/exec"></label>
+  <label>Staff key <input id="key"></label>
+  <label>Your name <input id="by"></label>
+  <button id="save">Start scanning</button>
+</section>
+<main id="app" hidden style="display:none;flex:1;flex-direction:column">
+  <header><strong id="count"></strong><button id="reset">Settings</button></header>
+  <div id="reader"></div>
+  <div id="result"><p id="big">Ready</p><p id="sub">Point the camera at a ticket</p></div>
+  <form id="manual"><input id="code" placeholder="Type ticket code" autocomplete="off"><button>Check</button></form>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+var cfg = {};
+try { cfg = JSON.parse(localStorage.getItem('cfg') || '{}'); } catch (e) {}
+var $ = function (id) { return document.getElementById(id); };
+var busy = false, scanner = null;
+
+function show() {
+  var ready = cfg.url && cfg.key;
+  $('setup').hidden = !!ready;
+  $('app').style.display = ready ? 'flex' : 'none';
+  if (ready) { start(); stats(); }
+}
+$('save').onclick = function () {
+  cfg = { url: $('url').value.trim(), key: $('key').value.trim(), by: $('by').value.trim() };
+  try { localStorage.setItem('cfg', JSON.stringify(cfg)); } catch (e) {}
+  show();
+};
+$('reset').onclick = function () {
+  try { localStorage.removeItem('cfg'); } catch (e) {}
+  location.reload();
+};
+function call(params) {
+  var q = Object.keys(params).map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+  return fetch(cfg.url + '?key=' + encodeURIComponent(cfg.key) + '&' + q).then(function (r) { return r.json(); });
+}
+function stats() {
+  call({ action: 'stats' }).then(function (s) {
+    if (s.result === 'denied') return;
+    $('count').textContent = s.checkedIn + ' in, ' + s.remaining + ' to go';
+  }).catch(function () {});
+}
+function result(r) {
+  var map = {
+    ok: ['Welcome', r.name],
+    already: ['Already used', (r.name || '') + ' came in at ' + (r.checkedInAt || '')],
+    invalid: ['Not a valid ticket', 'Check the code and try again'],
+    denied: ['Wrong staff key', 'Open Settings and re-enter it']
+  };
+  var m = map[r.result] || ['Error', 'Try again'];
+  document.body.className = r.result;
+  $('big').textContent = m[0];
+  $('sub').textContent = m[1];
+  if (navigator.vibrate) navigator.vibrate(r.result === 'ok' ? 80 : [120, 80, 120]);
+  setTimeout(function () {
+    document.body.className = ''; $('big').textContent = 'Ready'; $('sub').textContent = 'Point the camera at a ticket';
+    busy = false;
+  }, 2200);
+  stats();
+}
+function check(token) {
+  if (busy || !token) return;
+  busy = true;
+  call({ action: 'scan', token: token, by: cfg.by || '' }).then(result).catch(function () {
+    result({ result: 'error' });
+  });
+}
+function start() {
+  if (scanner) return;
+  scanner = new Html5Qrcode('reader');
+  scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 240 }, check, function () {})
+    .catch(function () { $('sub').textContent = 'Camera blocked. Allow camera access, or type the code below.'; });
+}
+$('manual').onsubmit = function (e) { e.preventDefault(); check($('code').value.trim()); $('code').value = ''; };
+show();
+</script>
+</body></html>
