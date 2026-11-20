@@ -24,11 +24,12 @@
     button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     #count { font-size: 18px; font-weight: 700; }
-    .frame { position: relative; border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--line); aspect-ratio: 1/1; max-height: 52vh; margin: 0 auto; width: 100%; }
+    .frame { position: relative; border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--line); aspect-ratio: 1/1; max-height: 52vh; margin: 0 auto; width: 100%; min-height: 220px; }
     #reader { width: 100%; height: 100%; }
     #reader video { width: 100% !important; height: 100% !important; object-fit: cover; }
     #reader img { display: none; }
     #cam { margin: 0; color: var(--mut); font-size: 14px; text-align: center; min-height: 20px; }
+    #cam.err { color: #ffb4b4; }
     #status { border-radius: 14px; padding: 22px 16px; text-align: center; background: var(--card); border: 1px solid var(--line); transition: background .15s; }
     #status.ok { background: var(--ok); border-color: var(--ok); }
     #status.already { background: var(--warn); border-color: var(--warn); }
@@ -37,6 +38,7 @@
     #sub { font-size: 18px; margin: 6px 0 0; color: #e6e9f0; overflow-wrap: anywhere; }
     form { display: flex; gap: 8px; }
     form input { flex: 1; min-width: 0; }
+    #retry { width: 100%; margin-top: 8px; }
     @media (min-width: 700px) {
       body { padding-top: 32px; }
       .frame { max-height: 420px; }
@@ -54,7 +56,7 @@
       <div class="card">
         <div class="field">
           <label for="url">Web app URL</label>
-          <input id="url" type="url" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="Are You Ready!">
+          <input id="url" type="url" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="https://script.google.com/macros/s/.../exec">
         </div>
         <div class="field">
           <label for="key">Staff key</label>
@@ -77,6 +79,7 @@
         <div id="reader"></div>
       </div>
       <p id="cam"></p>
+      <button id="retry" hidden>Retry camera</button>
       <div id="status">
         <p id="big">Ready</p>
         <p id="sub">Point the camera at a ticket</p>
@@ -104,7 +107,6 @@
     // ---------- BEEP (Web Audio API, no files needed) ----------
     var audioCtx = null;
 
-    // Called once after a user tap so mobile browsers allow sound later.
     function unlockAudio() {
       try {
         if (!audioCtx) {
@@ -113,7 +115,6 @@
           audioCtx = new AC();
         }
         if (audioCtx.state === 'suspended') audioCtx.resume();
-        // Play a silent blip to fully unlock on iOS
         var o = audioCtx.createOscillator();
         var g = audioCtx.createGain();
         g.gain.value = 0.0001;
@@ -123,7 +124,6 @@
       } catch (e) {}
     }
 
-    // Pattern: array of {f: frequency, d: duration seconds, gap: seconds after}
     function beep(pattern) {
       try {
         if (!audioCtx) {
@@ -149,30 +149,18 @@
       } catch (e) {}
     }
 
-    // Sound set for each result type
     function soundFor(resultType) {
-      if (resultType === 'ok') {
-        // Welcome: one clean high beep
-        beep([{ f: 988, d: 0.12, gap: 0 }]);
-      } else if (resultType === 'already') {
-        // Double scan: two descending beeps (distinct alert)
-        beep([{ f: 880, d: 0.14, gap: 0.06 }, { f: 587, d: 0.18, gap: 0 }]);
-      } else if (resultType === 'invalid') {
-        // Bad ticket: three fast low buzzes
-        beep([{ f: 300, d: 0.08, gap: 0.05 }, { f: 300, d: 0.08, gap: 0.05 }, { f: 300, d: 0.08, gap: 0 }]);
-      } else if (resultType === 'denied') {
-        // Wrong key: three low buzzes
-        beep([{ f: 220, d: 0.1, gap: 0.06 }, { f: 220, d: 0.1, gap: 0.06 }, { f: 220, d: 0.1, gap: 0 }]);
-      } else if (resultType === 'error') {
-        // No connection: two low buzzes
-        beep([{ f: 220, d: 0.12, gap: 0.08 }, { f: 220, d: 0.12, gap: 0 }]);
-      }
+      if (resultType === 'ok') beep([{ f: 988, d: 0.12, gap: 0 }]);
+      else if (resultType === 'already') beep([{ f: 880, d: 0.14, gap: 0.06 }, { f: 587, d: 0.18, gap: 0 }]);
+      else if (resultType === 'invalid') beep([{ f: 300, d: 0.08, gap: 0.05 }, { f: 300, d: 0.08, gap: 0.05 }, { f: 300, d: 0.08, gap: 0 }]);
+      else if (resultType === 'denied') beep([{ f: 220, d: 0.1, gap: 0.06 }, { f: 220, d: 0.1, gap: 0.06 }, { f: 220, d: 0.1, gap: 0 }]);
+      else if (resultType === 'error') beep([{ f: 220, d: 0.12, gap: 0.08 }, { f: 220, d: 0.12, gap: 0 }]);
     }
 
     function vibrateFor(resultType) {
       if (!navigator.vibrate) return;
       if (resultType === 'ok') navigator.vibrate(80);
-      else if (resultType === 'already') navigator.vibrate([150, 80, 150]);   // double pulse
+      else if (resultType === 'already') navigator.vibrate([150, 80, 150]);
       else if (resultType === 'invalid') navigator.vibrate([80, 60, 80, 60, 80]);
       else navigator.vibrate([120, 80, 120]);
     }
@@ -182,7 +170,10 @@
       $('setup').hidden = !!ready;
       $('app').hidden = !ready;
       if (ready) {
-        start();
+        // Wait one animation frame so #app/#reader have real size before the camera starts.
+        requestAnimationFrame(function () {
+          setTimeout(start, 50);
+        });
       } else {
         $('url').value = cfg.url || '';
         $('key').value = cfg.key || '';
@@ -191,7 +182,7 @@
     }
 
     $('save').onclick = function () {
-      unlockAudio();                       // unlock sound after the user's tap
+      unlockAudio();
       cfg = {
         url: $('url').value.trim(),
         key: $('key').value.trim(),
@@ -246,14 +237,13 @@
       $('count').textContent = s;
     }
 
-    // Put the list from the server in memory (keys are lower case, like the sheet search).
     function applyList(rows) {
       var m = {}, n = 0;
       rows.forEach(function (r) {
         m[String(r[0]).toLowerCase()] = { n: r[1], d: r[2], o: r[3], t: r[4] };
         if (r[4]) n++;
       });
-      queue.forEach(function (q) {               // scans not saved yet still count as checked in
+      queue.forEach(function (q) {
         var x = m[q.code.toLowerCase()];
         if (x && !x.t) {
           x.t = q.time || 'earlier';
@@ -266,9 +256,8 @@
       showCount();
     }
 
-    // Loads the list at start, then every 30 seconds to pick up other scanners' check-ins.
     function sync() {
-      if (list && (queue.length || sending)) return;          // finish saving first
+      if (list && (queue.length || sending)) return;
       dirty = false;
       call({ action: 'list' }).then(function (r) {
         if (r.result === 'denied') {
@@ -276,7 +265,7 @@
           return;
         }
         if (r.result !== 'list') return;
-        if (list && (dirty || queue.length)) return;          // a scan happened meanwhile; next sync will do
+        if (list && (dirty || queue.length)) return;
         applyList(r.rows);
       }).catch(function () {
         if (!list) $('count').textContent = 'Offline';
@@ -300,11 +289,8 @@
       };
       var m = map[r.result] || map.error;
       setStatus(map[r.result] ? r.result : 'error', m[0], m[1]);
-
-      // Sound + vibration for the result type
       soundFor(r.result);
       vibrateFor(r.result);
-
       clearTimeout(resetT);
       resetT = setTimeout(function () {
         setStatus('', 'Ready', 'Point the camera at a ticket');
@@ -314,14 +300,13 @@
       }, 500);
     }
 
-    // Saves waiting scans to the Sheet one by one, in the background. Retries when offline.
     function flush() {
       if (sending || !queue.length) return;
       sending = true;
       var q = queue[0];
       call({ action: 'scan', token: q.code, by: q.by }).then(function (r) {
         offline = false;
-        if (r.result === 'denied') {                           // keep the scan; fix the key in Settings
+        if (r.result === 'denied') {
           sending = false;
           showCount();
           result(r);
@@ -330,7 +315,7 @@
         queue.shift();
         saveQueue();
         dirty = true;
-        if (r.result === 'already') {                          // another scanner checked this ticket in first
+        if (r.result === 'already') {
           var p = list && list[q.code.toLowerCase()];
           if (p && r.checkedInAt) p.t = r.checkedInAt;
           result(r);
@@ -350,7 +335,6 @@
       });
     }
 
-    // Ticket is not in the local list (new attendee, or list not loaded yet): ask the server and wait.
     function slowCheck(code) {
       setStatus('', 'Checking…', 'Please wait');
       call({ action: 'scan', token: code, by: cfg.by || '' }).then(function (r) {
@@ -367,7 +351,7 @@
     }
 
     function check(raw) {
-      var code = String(raw || '').split('|').pop().trim();     // QR text is Name | Designation | Code
+      var code = String(raw || '').split('|').pop().trim();
       var now = Date.now();
       if (busy || !code || (code === lastTok && now - lastAt < 4000)) return;
       lastTok = code;
@@ -375,43 +359,105 @@
       busy = true;
       var p = list && list[code.toLowerCase()];
       if (!p) return slowCheck(code);
-      if (p.t) {                                                // already checked in: answered instantly
+      if (p.t) {
         result({ result: 'already', name: p.n, checkedInAt: p.t });
         return;
       }
       p.t = clock();
       inCount++;
       dirty = true;
-      result({ result: 'ok', name: p.n, designation: p.d, organization: p.o });   // instant "Welcome"
+      result({ result: 'ok', name: p.n, designation: p.d, organization: p.o });
       queue.push({ code: code, by: cfg.by || '', time: p.t });
       saveQueue();
       showCount();
       flush();
     }
 
+    // ---------- Camera start: real checks + clear errors + retry ----------
+    function camFail(msg) {
+      $('cam').textContent = msg;
+      $('cam').classList.add('err');
+      $('retry').hidden = false;
+    }
+
     function start() {
       if (scanner) return;
+      $('cam').classList.remove('err');
+      $('cam').textContent = 'Starting camera…';
+      $('retry').hidden = true;
+
+      // 1) Must be HTTPS / localhost
+      if (!window.isSecureContext) {
+        camFail('Camera needs HTTPS. Open this page from an https:// address (not file:// and not http://).');
+        return;
+      }
+      // 2) getUserMedia available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        camFail('This browser does not support the camera. Use Chrome on Android or Safari on iOS, over HTTPS.');
+        return;
+      }
+      // 3) Library loaded
+      if (typeof Html5Qrcode === 'undefined') {
+        camFail('Scanner library did not load. Check the internet and reload the page.');
+        return;
+      }
+
       try {
-        queue = JSON.parse(localStorage.getItem(qkey()) || '[]');   // scans not saved before the last close
+        queue = JSON.parse(localStorage.getItem(qkey()) || '[]');
       } catch (e) {
         queue = [];
       }
       sync();
       flush();
       setInterval(sync, 30000);
+
       scanner = new Html5Qrcode('reader', {
         formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
         experimentalFeatures: { useBarCodeDetectorIfSupported: true }
       });
+
       var box = function (w, h) {
         var s = Math.floor(Math.min(w, h) * 0.7);
         return { width: s, height: s };
       };
-      scanner.start({ facingMode: 'environment' }, { fps: 15, qrbox: box, aspectRatio: 1, disableFlip: true }, check, function () {})
-        .catch(function () {
-          $('cam').textContent = 'Camera is blocked. Allow camera access in the browser, or type the code below.';
-        });
+
+      scanner.start(
+        { facingMode: 'environment' },
+        { fps: 15, qrbox: box, aspectRatio: 1, disableFlip: true },
+        check,
+        function () {}
+      ).then(function () {
+        $('cam').textContent = 'Point the camera at a ticket';
+        $('cam').classList.remove('err');
+        $('retry').hidden = true;
+      }).catch(function (err) {
+        var name = (err && err.name) || '';
+        var msg = 'Camera failed to start.';
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          msg = 'Camera permission was denied. Tap the lock icon in the address bar → Site settings → Camera → Allow, then tap Retry.';
+        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          msg = 'No camera found on this device.';
+        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+          msg = 'Camera is being used by another app. Close other camera apps and tap Retry.';
+        } else if (name === 'OverconstrainedError') {
+          msg = 'Camera does not support the requested mode. Tap Retry.';
+        } else if (name === 'SecurityError') {
+          msg = 'Camera blocked by the browser. Make sure the page is on HTTPS.';
+        } else {
+          msg = 'Camera failed: ' + (err && err.message ? err.message : name || 'unknown error') + '. Tap Retry.';
+        }
+        camFail(msg);
+        scanner = null;
+      });
     }
+
+    $('retry').onclick = function () {
+      if (scanner) {
+        try { scanner.clear(); } catch (e) {}
+        scanner = null;
+      }
+      start();
+    };
 
     $('manual').onsubmit = function (e) {
       e.preventDefault();
